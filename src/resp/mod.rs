@@ -1,9 +1,10 @@
+use bytes::BytesMut;
+use enum_dispatch::enum_dispatch;
 use std::{
     collections::BTreeMap,
     ops::{Deref, DerefMut},
 };
-
-use enum_dispatch::enum_dispatch;
+use thiserror::Error;
 
 mod decode;
 mod encode;
@@ -13,12 +14,33 @@ pub trait RespEncode {
     fn encode(self) -> Vec<u8>;
 }
 
-pub trait RespDecode {
-    fn decode(buf: Self) -> Result<RespFrame, String>;
+pub trait RespDecode: Sized {
+    const PREFIX: &'static str;
+    fn decode(buf: &mut BytesMut) -> Result<Self, RespError>;
+    fn expect_length(buf: &[u8]) -> Result<usize, RespError>;
+}
+
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum RespError {
+    #[error("Invalid frame: {0}")]
+    InvalidFrame(String),
+    #[error("Invalid frame type: {0}")]
+    InvalidFrameType(String),
+    #[error("Invalid frame length: {0}")]
+    InvalidFrameLength(isize),
+    #[error("Frame is not complete")]
+    NotComplete,
+
+    #[error("Parse error: {0}")]
+    ParseIntError(#[from] std::num::ParseIntError),
+    #[error("Utf8 error: {0}")]
+    Uft8Error(#[from] std::str::Utf8Error),
+    #[error("Parse float error: {0}")]
+    ParseFloatError(#[from] std::num::ParseFloatError),
 }
 
 #[enum_dispatch(RespEncode)]
-#[derive(Debug)]
+#[derive(Debug, PartialEq, PartialOrd)]
 pub enum RespFrame {
     SimpleString(SimpleString),
     Error(SimpleError),
@@ -34,25 +56,25 @@ pub enum RespFrame {
     Set(RespSet),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, PartialOrd)]
 pub struct SimpleString(String);
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, PartialOrd)]
 pub struct SimpleError(String);
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, PartialOrd)]
 pub struct BulkString(Vec<u8>);
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, PartialOrd)]
 pub struct RespNullBulkString;
-#[derive(Debug)]
+#[derive(Debug, PartialEq, PartialOrd)]
 pub struct RespArray(Vec<RespFrame>);
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, PartialOrd)]
 pub struct RespNullArray;
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, PartialOrd)]
 pub struct RespNull;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, PartialOrd)]
 pub struct RespMap(BTreeMap<String, RespFrame>);
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, PartialOrd)]
 pub struct RespSet(Vec<RespFrame>);
 
 impl Deref for SimpleString {
@@ -148,5 +170,53 @@ impl RespSet {
 impl Default for RespMap {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl From<&str> for SimpleString {
+    fn from(s: &str) -> Self {
+        SimpleString(s.to_string())
+    }
+}
+
+impl From<&str> for RespFrame {
+    fn from(s: &str) -> Self {
+        SimpleString(s.to_string()).into()
+    }
+}
+
+impl From<&str> for SimpleError {
+    fn from(s: &str) -> Self {
+        SimpleError(s.to_string())
+    }
+}
+
+impl From<&str> for BulkString {
+    fn from(s: &str) -> Self {
+        BulkString(s.as_bytes().to_vec())
+    }
+}
+
+impl From<&[u8]> for BulkString {
+    fn from(s: &[u8]) -> Self {
+        BulkString(s.to_vec())
+    }
+}
+
+impl From<&[u8]> for RespFrame {
+    fn from(s: &[u8]) -> Self {
+        BulkString(s.to_vec()).into()
+    }
+}
+
+impl<const N: usize> From<&[u8; N]> for BulkString {
+    fn from(s: &[u8; N]) -> Self {
+        BulkString(s.to_vec())
+    }
+}
+
+impl<const N: usize> From<&[u8; N]> for RespFrame {
+    fn from(s: &[u8; N]) -> Self {
+        BulkString(s.to_vec()).into()
     }
 }
